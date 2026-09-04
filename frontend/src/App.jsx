@@ -290,6 +290,28 @@ function Home(props) {
         </p>
       </div>
 
+      <div
+        style={{
+          height: "300px",
+          width: "100%",
+          marginBottom: "20px",
+          borderRadius: "22px",
+          overflow: "hidden",
+          border: "1px solid #E1E3EC"
+        }}
+      >
+        <MapContainer
+          center={[22.5937, 78.9629]}
+          zoom={5}
+          style={{ height: "100%", width: "100%" }}
+        >
+          <TileLayer
+            attribution="&copy; OpenStreetMap contributors"
+            url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+          />
+        </MapContainer>
+      </div>
+
       <SearchBox {...props} />
 
       <div className="sectionTitle">
