@@ -1,18 +1,28 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { api } from "./api";
 import { useAsync, useLiveTracking, useSearch } from "./hooks";
 
-const TABS = [
-  ["home", "⌂", "Home"],
-  ["search", "⌕", "Search"],
-  ["live", "◉", "Live"],
-  ["alerts", "!", "Alerts"],
-  ["profile", "●", "Profile"],
+import "leaflet/dist/leaflet.css";
+import {
+  MapContainer,
+  TileLayer,
+  Marker,
+  Popup,
+  Polyline,
+} from "react-leaflet";
+
+const NAV = [
+  { id: "home", icon: "⌂", label: "Home" },
+  { id: "search", icon: "⌕", label: "Search" },
+  { id: "tickets", icon: "🎫", label: "Tickets" },
+  { id: "more", icon: "•••", label: "More" },
 ];
 
-const googleDisabled = !import.meta.env.VITE_GOOGLE_CLIENT_ID;
-
 function App() {
+  const [showSplash, setShowSplash] = useState(
+    () => localStorage.getItem("trackride_started") !== "yes"
+  );
+
   const [tab, setTab] = useState("home");
 
   const [mode, setMode] = useState("both");
@@ -21,6 +31,7 @@ function App() {
   const [date, setDate] = useState("");
 
   const [selectedVehicle, setSelectedVehicle] = useState(null);
+  const [journey, setJourney] = useState(null);
 
   const [user, setUser] = useState(() =>
     JSON.parse(localStorage.getItem("trackride_user") || "null")
@@ -36,8 +47,6 @@ function App() {
         })
     )
   );
-
-  /* ---------------- BACKEND HOOKS ---------------- */
 
   const vehiclesState = useAsync(
     () => api.vehicles(mode),
@@ -58,14 +67,19 @@ function App() {
     Boolean(selectedVehicle)
   );
 
-  const vehicles = vehiclesState.data?.vehicles || [];
-  const results = searchState.data?.results || [];
-  const alerts = alertsState.data?.alerts || alertsState.data || [];
+  const vehicles =
+    vehiclesState.data?.vehicles ||
+    vehiclesState.data ||
+    [];
 
-  const liveVehicle =
-    liveState.data?.vehicle || selectedVehicle;
+  const results =
+    searchState.data?.results ||
+    [];
 
-  /* ---------------- SETTINGS ---------------- */
+  const alerts =
+    alertsState.data?.alerts ||
+    alertsState.data ||
+    [];
 
   useEffect(() => {
     document.documentElement.classList.toggle(
@@ -85,90 +99,106 @@ function App() {
         "trackride_user",
         JSON.stringify(user)
       );
-    } else {
-      localStorage.removeItem("trackride_user");
     }
   }, [user]);
 
-  /* ---------------- ACTIONS ---------------- */
+  function startApp() {
+    localStorage.setItem("trackride_started", "yes");
+    setShowSplash(false);
+  }
 
-  const updateSetting = (key, value) => {
-    setSettings((prev) => ({
-      ...prev,
+  function updateSetting(key, value) {
+    setSettings((old) => ({
+      ...old,
       [key]: value,
     }));
-  };
+  }
 
-  const openVehicle = (vehicle) => {
+  function openVehicle(vehicle) {
     setSelectedVehicle(vehicle);
-    setTab("live");
-  };
+    setTab("home");
+    setJourney({
+      type: "live",
+      vehicle,
+    });
+  }
 
-  const startSearch = () => {
+  function searchJourneys() {
     setTab("search");
-  };
+  }
 
-  const loginWithGoogle = async (credential) => {
-    try {
-      const data = await api.googleLogin(credential);
-      setUser(data.user);
-    } catch (error) {
-      alert(error.message);
+  function openJourney(result) {
+    setJourney({
+      type: result.type || "train",
+      result,
+    });
+  }
+
+  function closeJourney() {
+    setJourney(null);
+  }
+
+  function goTab(id) {
+    setJourney(null);
+
+    if (id === "tickets") {
+      setTab("tickets");
+      return;
     }
-  };
 
-  const logout = () => {
-    setUser(null);
-  };
+    if (id === "more") {
+      setTab("more");
+      return;
+    }
 
-  const goTab = (nextTab) => {
-    setTab(nextTab);
-  };
+    setTab(id);
+  }
+
+  if (showSplash) {
+    return <SplashScreen onStart={startApp} />;
+  }
+
+  if (journey) {
+    if (journey.type === "live") {
+      return (
+        <LiveTracking
+          vehicle={
+            liveState.data?.vehicle ||
+            journey.vehicle
+          }
+          state={liveState}
+          onBack={closeJourney}
+        />
+      );
+    }
+
+    return (
+      <JourneyDetails
+        result={journey.result}
+        onBack={closeJourney}
+        onLive={() => {
+          if (journey.result?.vehicle) {
+            openVehicle(journey.result.vehicle);
+          }
+        }}
+      />
+    );
+  }
 
   return (
-    <div className="page-wrap">
-      <div className="app-shell">
+    <div className="app-page">
+      <div className="app-container">
 
-        {/* HEADER */}
-        <header className="topbar">
-          <div className="topbar-row">
+        <Header
+          user={user}
+          onProfile={() => setTab("more")}
+        />
 
-            <div className="brand">
-              <div className="brand-mark">
-                TrackRide
-              </div>
-
-              <div className="brand-tag">
-                Your city. Your route. In real time.
-              </div>
-            </div>
-
-            <button
-              className="icon-btn"
-              onClick={() => setTab("profile")}
-              aria-label="Profile"
-            >
-              {user?.picture ? (
-                <img src={user.picture} alt="" />
-              ) : (
-                "👤"
-              )}
-            </button>
-
-          </div>
-
-          {tab !== "home" && (
-            <h1 className="screen-title">
-              {TABS.find((item) => item[0] === tab)?.[2]}
-            </h1>
-          )}
-        </header>
-
-        {/* CONTENT */}
-        <main className="content">
+        <main className="screen-content">
 
           {tab === "home" && (
-            <HomeScreen
+            <Home
+              user={user}
               from={from}
               to={to}
               date={date}
@@ -177,10 +207,9 @@ function App() {
               setTo={setTo}
               setDate={setDate}
               setMode={setMode}
-              onSearch={startSearch}
+              onSearch={searchJourneys}
               vehicles={vehicles}
               onOpenVehicle={openVehicle}
-              loading={vehiclesState.loading}
             />
           )}
 
@@ -194,59 +223,37 @@ function App() {
               setTo={setTo}
               setDate={setDate}
               setMode={setMode}
-              onSearch={startSearch}
+              onSearch={searchJourneys}
               state={searchState}
               results={results}
-              onOpenVehicle={openVehicle}
+              onOpen={openJourney}
             />
           )}
 
-          {tab === "live" && (
-            <LiveScreen
-              vehicle={liveVehicle}
-              vehicles={vehicles}
-              state={liveState}
-              onOpenVehicle={openVehicle}
-            />
+          {tab === "tickets" && (
+            <TicketsScreen />
           )}
 
-          {tab === "alerts" && (
-            <AlertsScreen
-              alerts={alerts}
-              loading={alertsState.loading}
-              onOpenVehicle={openVehicle}
-            />
-          )}
-
-          {tab === "profile" && (
-            <ProfileScreen
+          {tab === "more" && (
+            <MoreScreen
               user={user}
-              googleDisabled={googleDisabled}
-              onGoogleLogin={loginWithGoogle}
-              logout={logout}
               settings={settings}
               updateSetting={updateSetting}
+              onLogout={() => {
+                localStorage.removeItem(
+                  "trackride_user"
+                );
+                setUser(null);
+              }}
             />
           )}
 
         </main>
 
-        {/* BOTTOM NAVIGATION */}
-        <nav className="bottom-nav">
-          {TABS.map(([id, icon, label]) => (
-            <button
-              key={id}
-              className={
-                "nav-btn " +
-                (tab === id ? "active" : "")
-              }
-              onClick={() => goTab(id)}
-            >
-              <span className="ni">{icon}</span>
-              <span className="nl">{label}</span>
-            </button>
-          ))}
-        </nav>
+        <BottomNav
+          tab={tab}
+          onChange={goTab}
+        />
 
       </div>
     </div>
@@ -254,11 +261,101 @@ function App() {
 }
 
 
-/* =========================================================
-   HOME
-========================================================= */
+/* =====================================================
+   SPLASH
+===================================================== */
 
-function HomeScreen({
+function SplashScreen({ onStart }) {
+  return (
+    <div className="splash">
+
+      <div className="splash-overlay">
+
+        <div className="logo-circle">
+          🚆
+        </div>
+
+        <h1>TrackRide</h1>
+
+        <p className="splash-sub">
+          Trains. Buses. Beyond.
+        </p>
+
+        <div className="splash-route">
+          Different routes.
+          <br />
+          Same destination.
+        </div>
+
+        <button
+          className="blue-button splash-button"
+          onClick={onStart}
+        >
+          Get Started →
+        </button>
+
+        <p className="splash-bottom">
+          Travel smarter. Go further.
+        </p>
+
+      </div>
+
+    </div>
+  );
+}
+
+
+/* =====================================================
+   HEADER
+===================================================== */
+
+function Header({ user, onProfile }) {
+  return (
+    <header className="header">
+
+      <div>
+        <div className="greeting">
+          Good Evening,
+        </div>
+
+        <div className="username">
+          {user?.name || "Traveller"}
+        </div>
+      </div>
+
+      <div className="header-actions">
+
+        <button className="round-icon">
+          ♧
+        </button>
+
+        <button
+          className="profile-avatar"
+          onClick={onProfile}
+        >
+          {user?.picture ? (
+            <img
+              src={user.picture}
+              alt=""
+            />
+          ) : (
+            "GU"
+          )}
+        </button>
+
+      </div>
+
+    </header>
+  );
+}
+
+
+/* =====================================================
+   HOME
+===================================================== */
+
+function Home({
+  user,
   from,
   to,
   date,
@@ -270,14 +367,14 @@ function HomeScreen({
   onSearch,
   vehicles,
   onOpenVehicle,
-  loading,
 }) {
   return (
-    <div className="fadein">
+    <div className="fade-in">
 
-      <div className="hero">
+      <section className="home-heading">
+
         <div className="eyebrow">
-          ONE SEARCH. EVERY RIDE.
+          YOUR JOURNEY STARTS HERE
         </div>
 
         <h2>
@@ -286,11 +383,7 @@ function HomeScreen({
           want to go?
         </h2>
 
-        <p>
-          Find buses and trains across India
-          from one place.
-        </p>
-      </div>
+      </section>
 
       <SearchCard
         from={from}
@@ -304,76 +397,55 @@ function HomeScreen({
         onSearch={onSearch}
       />
 
-      <div className="quick-actions">
+      <section>
 
-        <button
-          className="quick-btn"
-          onClick={() => {
-            setMode("bus");
-            onOpenVehicle(vehicles[0]);
-          }}
-        >
-          <span className="qi">🚌</span>
-          <span className="ql">Nearby Buses</span>
-        </button>
-
-        <button
-          className="quick-btn"
-          onClick={() => {
-            setMode("train");
-            onOpenVehicle(vehicles[0]);
-          }}
-        >
-          <span className="qi">🚆</span>
-          <span className="ql">Nearby Trains</span>
-        </button>
-
-        <button
-          className="quick-btn"
-          onClick={() => {
-            document
-              .querySelector(".search-input")
-              ?.focus();
-          }}
-        >
-          <span className="qi">📍</span>
-          <span className="ql">Search Places</span>
-        </button>
-
-      </div>
-
-      <div className="section-heading">
-        Nearby live transport
-      </div>
-
-      {loading ? (
-        <Loading />
-      ) : vehicles.length === 0 ? (
-        <EmptyState
-          icon="🚌"
-          title="No live vehicles yet"
-          text="Live buses and trains will appear here when the backend has transport data."
-        />
-      ) : (
-        <div className="card-list">
-          {vehicles.slice(0, 5).map((vehicle) => (
-            <VehicleCard
-              key={vehicle.id}
-              vehicle={vehicle}
-              onOpen={onOpenVehicle}
-            />
-          ))}
+        <div className="section-header">
+          <h3>Quick Actions</h3>
         </div>
-      )}
+
+        <div className="quick-grid">
+
+          <QuickAction
+            icon="📍"
+            title="Live Tracking"
+            onClick={() => {
+              if (vehicles[0]) {
+                onOpenVehicle(vehicles[0]);
+              }
+            }}
+          />
+
+          <QuickAction
+            icon="🎫"
+            title="PNR / Ticket"
+          />
+
+          <QuickAction
+            icon="◷"
+            title="Timetables"
+          />
+
+          <QuickAction
+            icon="📍"
+            title="Nearby Stations"
+          />
+
+        </div>
+
+      </section>
+
+      <ExploreCard />
+
+      <RecentSearches />
 
     </div>
   );
 }
 
 
-/* =========================================================
-   SEARCH
-========================================================= */
+/* =====================================================
+   SEARCH CARD
+===================================================== */
 
 function SearchCard({
   from,
@@ -389,83 +461,106 @@ function SearchCard({
   return (
     <div className="search-card">
 
-      <div className="transport-switch">
+      <div className="transport-tabs">
 
         <button
-          className={mode === "both" ? "selected" : ""}
+          className={
+            mode === "both" ? "active" : ""
+          }
           onClick={() => setMode("both")}
         >
           All
         </button>
 
         <button
-          className={mode === "bus" ? "selected" : ""}
-          onClick={() => setMode("bus")}
+          className={
+            mode === "train" ? "active" : ""
+          }
+          onClick={() => setMode("train")}
         >
-          🚌 Bus
+          🚆 Trains
         </button>
 
         <button
-          className={mode === "train" ? "selected" : ""}
-          onClick={() => setMode("train")}
+          className={
+            mode === "bus" ? "active" : ""
+          }
+          onClick={() => setMode("bus")}
         >
-          🚆 Train
+          🚌 Buses
         </button>
 
       </div>
 
-      <label className="search-field">
-        <span className="search-dot from">●</span>
+      <div className="location-input">
+
+        <span className="location-dot blue">
+          ●
+        </span>
 
         <div>
-          <small>FROM</small>
+          <label>FROM</label>
 
           <input
-            className="search-input"
             value={from}
-            onChange={(e) => setFrom(e.target.value)}
-            placeholder="City, station or stop"
+            onChange={(e) =>
+              setFrom(e.target.value)
+            }
+            placeholder="Enter source"
           />
         </div>
-      </label>
 
-      <div className="search-divider" />
+      </div>
 
-      <label className="search-field">
-        <span className="search-dot to">●</span>
+      <button
+        className="swap-button"
+        onClick={() => {
+          setFrom(to);
+          setTo(from);
+        }}
+      >
+        ↕
+      </button>
+
+      <div className="location-input">
+
+        <span className="location-dot dark">
+          ●
+        </span>
 
         <div>
-          <small>TO</small>
+          <label>TO</label>
 
           <input
             value={to}
-            onChange={(e) => setTo(e.target.value)}
-            placeholder="Where do you want to go?"
+            onChange={(e) =>
+              setTo(e.target.value)
+            }
+            placeholder="Enter destination"
           />
         </div>
-      </label>
 
-      <div className="search-divider" />
+      </div>
 
-      <label className="date-field">
-        <span>📅</span>
+      <div className="date-input">
 
-        <div>
-          <small>DATE</small>
+        <span>▣</span>
 
-          <input
-            type="date"
-            value={date}
-            onChange={(e) => setDate(e.target.value)}
-          />
-        </div>
-      </label>
+        <input
+          type="date"
+          value={date}
+          onChange={(e) =>
+            setDate(e.target.value)
+          }
+        />
+
+      </div>
 
       <button
-        className="primary-btn"
+        className="blue-button search-button"
         onClick={onSearch}
       >
-        Find buses & trains
+        Search Journeys →
       </button>
 
     </div>
@@ -473,9 +568,118 @@ function SearchCard({
 }
 
 
-/* =========================================================
+/* =====================================================
+   QUICK ACTION
+===================================================== */
+
+function QuickAction({
+  icon,
+  title,
+  onClick,
+}) {
+  return (
+    <button
+      className="quick-action"
+      onClick={onClick}
+    >
+      <span className="quick-icon">
+        {icon}
+      </span>
+
+      <span>{title}</span>
+    </button>
+  );
+}
+
+
+/* =====================================================
+   EXPLORE
+===================================================== */
+
+function ExploreCard() {
+  return (
+    <section className="explore-section">
+
+      <div className="section-header">
+        <h3>Explore India</h3>
+      </div>
+
+      <div className="explore-card">
+
+        <div className="explore-overlay">
+
+          <strong>
+            One journey at a time.
+          </strong>
+
+          <span>
+            Discover cities, routes and
+            new places.
+          </span>
+
+        </div>
+
+      </div>
+
+    </section>
+  );
+}
+
+
+/* =====================================================
+   RECENT SEARCHES
+===================================================== */
+
+function RecentSearches() {
+  const searches = [
+    ["Kolkata", "Dhanbad"],
+    ["Howrah", "Asansol"],
+    ["Delhi", "Jaipur"],
+  ];
+
+  return (
+    <section className="recent-section">
+
+      <div className="section-header">
+        <h3>Recent Searches</h3>
+        <button>Clear</button>
+      </div>
+
+      <div className="recent-list">
+
+        {searches.map(
+          ([a, b], index) => (
+            <div
+              className="recent-item"
+              key={index}
+            >
+              <span>↔</span>
+
+              <div>
+                <strong>
+                  {a} → {b}
+                </strong>
+
+                <small>
+                  Search again
+                </small>
+              </div>
+
+              <span>›</span>
+            </div>
+          )
+        )}
+
+      </div>
+
+    </section>
+  );
+}
+
+
+/* =====================================================
    SEARCH RESULTS
-========================================================= */
+===================================================== */
 
 function SearchScreen({
   from,
@@ -489,60 +693,101 @@ function SearchScreen({
   onSearch,
   state,
   results,
-  onOpenVehicle,
+  onOpen,
 }) {
   return (
-    <div className="fadein">
+    <div className="fade-in">
 
-      <div className="page-intro">
-        <div className="eyebrow">
-          PLAN YOUR JOURNEY
+      <div className="results-top">
+
+        <button
+          className="back-small"
+          onClick={() => window.history.back()}
+        >
+          ←
+        </button>
+
+        <div>
+
+          <strong>
+            {from || "Source"} →{" "}
+            {to || "Destination"}
+          </strong>
+
+          <small>
+            {date || "Today"}
+          </small>
+
         </div>
 
-        <h2>Find a ride</h2>
-
-        <p>
-          Search buses and trains by city,
-          station or stop.
-        </p>
       </div>
 
-      <SearchCard
-        from={from}
-        to={to}
-        date={date}
-        mode={mode}
-        setFrom={setFrom}
-        setTo={setTo}
-        setDate={setDate}
-        setMode={setMode}
-        onSearch={onSearch}
-      />
+      <div className="transport-tabs result-tabs">
 
-      {state.loading && <Loading />}
+        <button
+          className={
+            mode === "both" ? "active" : ""
+          }
+          onClick={() => setMode("both")}
+        >
+          All
+        </button>
+
+        <button
+          className={
+            mode === "train" ? "active" : ""
+          }
+          onClick={() => setMode("train")}
+        >
+          🚆 Trains
+        </button>
+
+        <button
+          className={
+            mode === "bus" ? "active" : ""
+          }
+          onClick={() => setMode("bus")}
+        >
+          🚌 Buses
+        </button>
+
+      </div>
+
+      <div className="filter-row">
+
+        <button>Sort ▾</button>
+        <button>Departure</button>
+        <button>Duration</button>
+        <button>Price</button>
+
+      </div>
+
+      {state.loading && (
+        <Loading text="Finding the best routes..." />
+      )}
 
       {state.error && (
-        <ErrorState message={state.error.message} />
+        <div className="error-box">
+          Something went wrong.
+          <br />
+          {state.error.message}
+        </div>
       )}
 
       {!state.loading &&
         !state.error &&
         results.length > 0 && (
-          <>
-            <div className="section-heading">
-              {results.length} transport options
-            </div>
+          <div className="journey-list">
 
-            <div className="card-list">
-              {results.map((result) => (
-                <ResultCard
-                  key={result.id}
-                  result={result}
-                  onOpen={onOpenVehicle}
-                />
-              ))}
-            </div>
-          </>
+            {results.map((result) => (
+              <JourneyCard
+                key={result.id}
+                result={result}
+                onOpen={onOpen}
+              />
+            ))}
+
+          </div>
         )}
 
       {!state.loading &&
@@ -550,10 +795,9 @@ function SearchScreen({
         from &&
         to &&
         results.length === 0 && (
-          <EmptyState
-            icon="🔎"
-            title="No rides found"
-            text="Try another city, station or transport type."
+          <Empty
+            title="No journeys found"
+            text="Try changing your destination or travel date."
           />
         )}
 
@@ -562,133 +806,103 @@ function SearchScreen({
 }
 
 
-/* =========================================================
-   VEHICLE CARD
-========================================================= */
+/* =====================================================
+   JOURNEY CARD
+===================================================== */
 
-function VehicleCard({ vehicle, onOpen }) {
-  const isTrain = vehicle.type === "train";
+function JourneyCard({
+  result,
+  onOpen,
+}) {
+  const isTrain =
+    result.type === "train";
 
   return (
     <article
-      className="vehicle-card"
-      onClick={() => onOpen(vehicle)}
+      className={
+        "journey-card " +
+        (isTrain ? "train-card" : "bus-card")
+      }
+      onClick={() => onOpen(result)}
     >
 
-      <div
-        className={
-          "vehicle-badge " +
-          (isTrain ? "train" : "bus")
-        }
-      >
-        {isTrain ? "🚆" : "🚌"}
-      </div>
+      <div className="journey-head">
 
-      <div className="vehicle-info">
+        <div className="transport-label">
 
-        <div className="vehicle-name">
-          {vehicle.name || vehicle.number || "Transport"}
+          <span>
+            {isTrain ? "🚆" : "🚌"}
+          </span>
+
+          <strong>
+            {result.name ||
+              result.number ||
+              (isTrain
+                ? "Train Service"
+                : "Bus Service")}
+          </strong>
+
         </div>
 
-        <div className="vehicle-route">
-          {vehicle.from || "Unknown"} →{" "}
-          {vehicle.to || "Unknown"}
-        </div>
-
-        <div className="vehicle-meta">
-          {isTrain ? "TRAIN" : "BUS"}
-          {vehicle.status && (
-            <> · {vehicle.status}</>
-          )}
-        </div>
-
-      </div>
-
-      <div className="vehicle-arrow">
-        ›
-      </div>
-
-    </article>
-  );
-}
-
-
-/* =========================================================
-   RESULT CARD
-========================================================= */
-
-function ResultCard({ result, onOpen }) {
-  const isTrain = result.type === "train";
-
-  return (
-    <article className="result-card">
-
-      <div className="result-top">
-
-        <div
-          className={
-            "transport-badge " +
-            (isTrain ? "train" : "bus")
-          }
-        >
-          {isTrain ? "🚆 TRAIN" : "🚌 BUS"}
-        </div>
-
-        <span className="result-duration">
-          {result.duration
-            ? `${result.duration} min`
-            : ""}
+        <span className="on-time">
+          {result.status ||
+            "ON TIME"}
         </span>
 
       </div>
 
-      <h3>
-        {result.name ||
-          result.number ||
-          "Transport service"}
-      </h3>
-
-      <div className="result-route">
-        {result.from} → {result.to}
-      </div>
-
-      <div className="result-times">
+      <div className="journey-times">
 
         <div>
-          <small>DEPARTURE</small>
           <strong>
             {result.departure || "--"}
           </strong>
+
+          <small>
+            {result.from || "Source"}
+          </small>
         </div>
 
-        <div className="time-line">
-          ─────────
+        <div className="journey-duration">
+
+          <span>
+            ─────────
+          </span>
+
+          <small>
+            {result.duration
+              ? `${result.duration} min`
+              : ""}
+          </small>
+
         </div>
 
-        <div className="right">
-          <small>ARRIVAL</small>
+        <div className="right-align">
+
           <strong>
             {result.arrival || "--"}
           </strong>
+
+          <small>
+            {result.to || "Destination"}
+          </small>
+
         </div>
 
       </div>
 
-      <div className="result-bottom">
+      <div className="journey-footer">
+
         <span>
-          {result.status || "Schedule available"}
+          {isTrain
+            ? "Train"
+            : "Bus"}
         </span>
 
-        {result.vehicle && (
-          <button
-            className="small-btn"
-            onClick={() =>
-              onOpen(result.vehicle)
-            }
-          >
-            Live tracking
-          </button>
-        )}
+        <span>
+          View details →
+        </span>
+
       </div>
 
     </article>
@@ -696,199 +910,336 @@ function ResultCard({ result, onOpen }) {
 }
 
 
-/* =========================================================
-   LIVE
-========================================================= */
+/* =====================================================
+   JOURNEY DETAILS
+===================================================== */
 
-function LiveScreen({
-  vehicle,
-  vehicles,
-  state,
-  onOpenVehicle,
+function JourneyDetails({
+  result,
+  onBack,
+  onLive,
 }) {
-  if (!vehicle) {
-    return (
-      <div className="fadein">
+  const isTrain =
+    result.type === "train";
 
-        <div className="page-intro">
-          <div className="eyebrow">
-            REAL-TIME TRANSPORT
-          </div>
-
-          <h2>Live tracking</h2>
-
-          <p>
-            Select a bus or train to see its
-            latest movement.
-          </p>
-        </div>
-
-        {vehicles.length === 0 ? (
-          <EmptyState
-            icon="📍"
-            title="No live vehicles"
-            text="Live transport positions will appear here."
-          />
-        ) : (
-          <div className="card-list">
-            {vehicles.map((v) => (
-              <VehicleCard
-                key={v.id}
-                vehicle={v}
-                onOpen={onOpenVehicle}
-              />
-            ))}
-          </div>
-        )}
-
-      </div>
-    );
-  }
-
-  const current =
-    state.data?.vehicle || vehicle;
-
-  const isTrain = current.type === "train";
+  const stops =
+    result.stops ||
+    (isTrain
+      ? [
+          ["16:50", "Howrah (HWH)", "Start"],
+          ["17:32", "Bardhaman (BWN)", "2m"],
+          ["19:20", "Durgapur (DGR)", "3m"],
+          ["21:10", "Asansol (ASN)", "5m"],
+          ["01:15", "Dhanbad (DHN)", "End"],
+        ]
+      : [
+          ["18:15", "Esplanade", "Start"],
+          ["19:00", "Ultadanga", "5m"],
+          ["21:30", "Bardhaman", "10m"],
+          ["00:15", "Durgapur", "5m"],
+          ["03:00", "Asansol", "5m"],
+          ["06:30", "Dhanbad Bus Stand", "End"],
+        ]);
 
   return (
-    <div className="fadein">
+    <div className="details-page">
 
-      <div className="live-header">
+      <div className="details-header">
+
+        <button
+          className="back-button"
+          onClick={onBack}
+        >
+          ←
+        </button>
 
         <div>
-          <div className="eyebrow">
-            LIVE NOW
-          </div>
+          <small>
+            {isTrain ? "TRAIN" : "BUS"}
+          </small>
 
           <h2>
-            {isTrain ? "Train" : "Bus"} tracking
+            {result.name ||
+              result.number ||
+              (isTrain
+                ? "Train"
+                : "Bus")}
           </h2>
 
           <p>
-            {current.name ||
-              current.number ||
-              "Selected vehicle"}
+            {result.from} → {result.to}
           </p>
         </div>
 
-        <span className="live-dot">
+        <span className="live-status">
+          ON TIME
+        </span>
+
+      </div>
+
+      <div className="details-tabs">
+
+        <button className="active">
+          {isTrain ? "Schedule" : "Stops"}
+        </button>
+
+        <button>
+          {isTrain
+            ? "Coach"
+            : "Amenities"}
+        </button>
+
+        <button>Info</button>
+
+      </div>
+
+      <div className="timeline">
+
+        {stops.map(
+          ([time, place, label], index) => (
+            <div
+              className="timeline-row"
+              key={index}
+            >
+
+              <div className="timeline-time">
+                {time}
+              </div>
+
+              <div className="timeline-line">
+
+                <span
+                  className={
+                    "timeline-dot " +
+                    (index === 0 ||
+                    index === stops.length - 1
+                      ? "main"
+                      : "")
+                  }
+                />
+
+              </div>
+
+              <div className="timeline-place">
+
+                <strong>
+                  {place}
+                </strong>
+
+                <small>
+                  {label}
+                </small>
+
+              </div>
+
+            </div>
+          )
+        )}
+
+      </div>
+
+      <div className="detail-actions">
+
+        <button>
+          🔔
+          <span>Set Alert</span>
+        </button>
+
+        <button>
+          ↗
+          <span>Share</span>
+        </button>
+
+        <button>
+          ☆
+          <span>Save</span>
+        </button>
+
+      </div>
+
+      {result.vehicle && (
+        <button
+          className="blue-button full-button"
+          onClick={onLive}
+        >
+          Track Live
+        </button>
+      )}
+
+      <button className="blue-button full-button">
+        {isTrain
+          ? "Check Availability"
+          : "Book / Check Availability"}
+      </button>
+
+    </div>
+  );
+}
+
+
+/* =====================================================
+   LIVE TRACKING
+===================================================== */
+
+function LiveTracking({
+  vehicle,
+  state,
+  onBack,
+}) {
+  const isTrain =
+    vehicle?.type === "train";
+
+  const lat =
+    vehicle?.latitude ??
+    22.5726;
+
+  const lng =
+    vehicle?.longitude ??
+    88.3639;
+
+  return (
+    <div className="live-page">
+
+      <div className="live-top">
+
+        <button
+          className="back-button"
+          onClick={onBack}
+        >
+          ←
+        </button>
+
+        <div>
+          <small>LIVE TRACKING</small>
+
+          <h2>
+            {isTrain ? "Train" : "Bus"}
+          </h2>
+
+          <p>
+            {vehicle?.name ||
+              vehicle?.number ||
+              "Transport"}
+          </p>
+        </div>
+
+        <span className="live-badge">
           ● LIVE
         </span>
 
       </div>
 
-      {/* MAP AREA */}
-      <div className="map-card">
+      <div className="live-transport-tabs">
 
-        <div className="map-header">
-          <strong>
-            Live location
-          </strong>
+        <button
+          className={isTrain ? "active" : ""}
+        >
+          🚆 Train
+        </button>
 
-          <span>
-            {current.updatedAt
-              ? new Date(
-                  current.updatedAt
-                ).toLocaleTimeString()
-              : "Updating"}
-          </span>
-        </div>
-
-        <div className="map-area">
-
-          <div className="map-grid" />
-
-          <div className="map-route-line">
-            <span className="map-stop first" />
-            <span className="map-stop second" />
-            <span className="map-stop third" />
-            <span className="map-stop fourth" />
-          </div>
-
-          <div className="vehicle-marker">
-            {isTrain ? "🚆" : "🚌"}
-          </div>
-
-          <div className="location-label">
-            Current location
-          </div>
-
-        </div>
+        <button
+          className={!isTrain ? "active" : ""}
+        >
+          🚌 Bus
+        </button>
 
       </div>
 
-      {state.error && (
-        <ErrorState message={state.error.message} />
-      )}
+      <MapView
+        latitude={lat}
+        longitude={lng}
+        vehicle={vehicle}
+      />
 
-      {/* LIVE INFORMATION */}
-      <div className="live-card">
+      <div className="live-sheet">
 
-        <div className="live-vehicle-row">
+        <div className="sheet-handle" />
+
+        <div className="sheet-tabs">
+          <button className="active">
+            Live Location
+          </button>
+
+          <button>
+            Route
+          </button>
+
+          <button>
+            Alerts
+          </button>
+        </div>
+
+        <div className="live-title">
 
           <div
             className={
-              "vehicle-badge " +
+              "large-transport-icon " +
               (isTrain ? "train" : "bus")
             }
           >
             {isTrain ? "🚆" : "🚌"}
           </div>
 
-          <div className="vehicle-info">
+          <div>
 
             <strong>
-              {current.name ||
-                current.number ||
+              {vehicle?.name ||
+                vehicle?.number ||
                 "Transport"}
             </strong>
 
             <span>
-              {current.from || "--"} →{" "}
-              {current.to || "--"}
+              {vehicle?.status ||
+                "Live data unavailable"}
             </span>
 
           </div>
 
         </div>
 
-        <div className="live-stats">
+        <div className="live-info-grid">
 
-          <InfoBox
-            label="ETA"
-            value={
-              current.etaMin != null
-                ? `${current.etaMin} min`
-                : "--"
-            }
-          />
-
-          <InfoBox
-            label="Distance"
-            value={
-              current.distanceKm != null
-                ? `${current.distanceKm} km`
-                : "--"
-            }
-          />
-
-          <InfoBox
+          <Info
             label="Speed"
             value={
-              current.speed != null
-                ? `${current.speed} km/h`
+              vehicle?.speed != null
+                ? `${vehicle.speed} km/h`
                 : "--"
             }
           />
 
-          <InfoBox
-            label="Status"
+          <Info
+            label="ETA"
             value={
-              current.status || "Active"
+              vehicle?.etaMin != null
+                ? `${vehicle.etaMin} min`
+                : "--"
+            }
+          />
+
+          <Info
+            label="Next Stop"
+            value={
+              vehicle?.nextStop || "--"
+            }
+          />
+
+          <Info
+            label="Updated"
+            value={
+              vehicle?.updatedAt
+                ? "Recently"
+                : "--"
             }
           />
 
         </div>
+
+        {state.error && (
+          <div className="error-box">
+            Live data unavailable.
+          </div>
+        )}
 
       </div>
 
@@ -897,141 +1248,153 @@ function LiveScreen({
 }
 
 
-/* =========================================================
-   ALERTS
-========================================================= */
+/* =====================================================
+   MAP
+===================================================== */
 
-function AlertsScreen({
-  alerts,
-  loading,
-  onOpenVehicle,
+function MapView({
+  latitude,
+  longitude,
+  vehicle,
 }) {
-  return (
-    <div className="fadein">
+  const position = [
+    latitude,
+    longitude,
+  ];
 
-      <div className="page-intro">
+  const route = [
+    [
+      latitude - 0.15,
+      longitude - 0.25,
+    ],
+    [
+      latitude - 0.05,
+      longitude - 0.08,
+    ],
+    position,
+    [
+      latitude + 0.10,
+      longitude + 0.12,
+    ],
+    [
+      latitude + 0.18,
+      longitude + 0.25,
+    ],
+  ];
+
+  return (
+    <div className="map-container">
+
+      <MapContainer
+        center={position}
+        zoom={8}
+        scrollWheelZoom={false}
+        className="real-map"
+      >
+
+        <TileLayer
+          attribution='&copy; OpenStreetMap contributors'
+          url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+        />
+
+        <Polyline
+          positions={route}
+        />
+
+        <Marker position={position}>
+          <Popup>
+            {vehicle?.name ||
+              "Current vehicle"}
+          </Popup>
+        </Marker>
+
+      </MapContainer>
+
+    </div>
+  );
+}
+
+
+/* =====================================================
+   TIMETABLE / TICKETS
+===================================================== */
+
+function TicketsScreen() {
+  return (
+    <div className="fade-in">
+
+      <div className="page-heading">
         <div className="eyebrow">
-          STAY UPDATED
+          YOUR JOURNEYS
         </div>
 
-        <h2>Service alerts</h2>
+        <h2>Tickets</h2>
 
         <p>
-          Delays, service changes and live
-          transport updates.
+          Your bookings and ticket information
+          will appear here.
         </p>
       </div>
 
-      {loading ? (
-        <Loading />
-      ) : alerts.length === 0 ? (
-        <EmptyState
-          icon="🔔"
-          title="No alerts"
-          text="You're all clear for now."
+      <div className="empty-card">
+
+        <div className="empty-large-icon">
+          🎫
+        </div>
+
+        <h3>No tickets yet</h3>
+
+        <p>
+          Book a journey and your tickets
+          will appear here.
+        </p>
+
+        <button className="blue-button">
+          Find a Journey
+        </button>
+
+      </div>
+
+      <div className="feature-list">
+
+        <FeatureRow
+          icon="🎫"
+          title="PNR / Ticket Status"
         />
-      ) : (
-        alerts.map((alert) => (
-          <article
-            className={
-              "alert-card " +
-              (alert.priority || "normal")
-            }
-            key={alert.id}
-            onClick={() =>
-              alert.vehicle &&
-              onOpenVehicle(alert.vehicle)
-            }
-          >
 
-            <div className="alert-icon">
-              {alert.priority === "urgent"
-                ? "⚠️"
-                : "🔔"}
-            </div>
+        <FeatureRow
+          icon="🧾"
+          title="Booking History"
+        />
 
-            <div className="alert-content">
+        <FeatureRow
+          icon="💳"
+          title="Saved Payments"
+        />
 
-              <div className="alert-title">
-                {alert.title ||
-                  alert.message ||
-                  "Transport update"}
-              </div>
-
-              <p>
-                {alert.text ||
-                  alert.message ||
-                  "New service information available."}
-              </p>
-
-              <small>
-                {alert.time ||
-                  alert.created_at ||
-                  "Recently"}
-              </small>
-
-            </div>
-
-          </article>
-        ))
-      )}
+      </div>
 
     </div>
   );
 }
 
 
-/* =========================================================
-   PROFILE
-========================================================= */
+/* =====================================================
+   MORE
+===================================================== */
 
-function ProfileScreen({
+function MoreScreen({
   user,
-  googleDisabled,
-  onGoogleLogin,
-  logout,
   settings,
   updateSetting,
+  onLogout,
 }) {
-  useEffect(() => {
-    if (
-      googleDisabled ||
-      !window.google
-    ) {
-      return;
-    }
-
-    window.google.accounts.id.initialize({
-      client_id:
-        import.meta.env.VITE_GOOGLE_CLIENT_ID,
-
-      callback: (response) =>
-        onGoogleLogin(response.credential),
-    });
-
-    const node =
-      document.getElementById("googleButton");
-
-    if (node) {
-      node.innerHTML = "";
-
-      window.google.accounts.id.renderButton(
-        node,
-        {
-          theme: "outline",
-          size: "large",
-          width: 280,
-        }
-      );
-    }
-  }, [googleDisabled, onGoogleLogin]);
-
   return (
-    <div className="fadein">
+    <div className="fade-in">
 
-      <div className="profile-header">
+      <div className="profile-card">
 
-        <div className="avatar">
+        <div className="profile-avatar large">
           {user?.picture ? (
             <img
               src={user.picture}
@@ -1043,62 +1406,76 @@ function ProfileScreen({
         </div>
 
         <div>
-          <div className="profile-name">
-            {user?.name || "Guest User"}
-          </div>
-
-          <div className="profile-sub">
-            {user?.email ||
-              "Sign in to sync your TrackRide account"}
-          </div>
-        </div>
-
-      </div>
-
-      {!user ? (
-        <div className="auth-card">
-
-          <div className="section-heading">
-            Your TrackRide account
-          </div>
+          <h2>
+            {user?.name ||
+              "Guest User"}
+          </h2>
 
           <p>
-            Sign in with Google to save routes,
-            preferences and journeys.
+            {user?.email ||
+              "Not signed in"}
           </p>
-
-          <div
-            id="googleButton"
-            className="google-button"
-          />
-
-          {googleDisabled && (
-            <small>
-              Google sign-in will be enabled after
-              VITE_GOOGLE_CLIENT_ID is configured.
-            </small>
-          )}
-
         </div>
-      ) : (
-        <button
-          className="secondary-btn full"
-          onClick={logout}
-        >
-          Sign out
-        </button>
-      )}
 
-      <div className="section-heading">
-        Preferences
       </div>
 
-      <div className="settings-card">
+      <div className="section-heading">
+        My TrackRide
+      </div>
+
+      <div className="menu-card">
+
+        <FeatureRow
+          icon="🎫"
+          title="My Bookings"
+        />
+
+        <FeatureRow
+          icon="🧾"
+          title="PNR / Ticket Status"
+        />
+
+        <FeatureRow
+          icon="📍"
+          title="Live Tracking"
+        />
+
+        <FeatureRow
+          icon="★"
+          title="Saved Journeys"
+        />
+
+        <FeatureRow
+          icon="◷"
+          title="Timetables"
+        />
+
+        <FeatureRow
+          icon="📍"
+          title="Nearby Stations & Bus Stops"
+        />
+
+        <FeatureRow
+          icon="₹"
+          title="Fare Enquiry"
+        />
+
+        <FeatureRow
+          icon="🔔"
+          title="Travel Alerts"
+        />
+
+      </div>
+
+      <div className="section-heading">
+        Settings
+      </div>
+
+      <div className="menu-card">
 
         <SettingRow
           icon="🔔"
           title="Notifications"
-          subtitle="Arrival and delay alerts"
           value={settings.notifications}
           onChange={(value) =>
             updateSetting(
@@ -1110,8 +1487,7 @@ function ProfileScreen({
 
         <SettingRow
           icon="🔠"
-          title="Larger text"
-          subtitle="Accessibility mode"
+          title="Accessibility"
           value={settings.largeText}
           onChange={(value) =>
             updateSetting(
@@ -1121,85 +1497,119 @@ function ProfileScreen({
           }
         />
 
-        <div className="setting-row">
+        <FeatureRow
+          icon="🌐"
+          title="Language"
+          right={settings.language}
+        />
 
-          <span className="setting-icon">
-            🌐
-          </span>
-
-          <div className="setting-info">
-            <strong>Language</strong>
-            <small>
-              Choose your preferred language
-            </small>
-          </div>
-
-          <select
-            value={settings.language}
-            onChange={(e) =>
-              updateSetting(
-                "language",
-                e.target.value
-              )
-            }
-          >
-            <option>English</option>
-            <option>हिन्दी</option>
-            <option>বাংলা</option>
-            <option>मराठी</option>
-          </select>
-
-        </div>
+        <FeatureRow
+          icon="❓"
+          title="Help & Support"
+        />
 
       </div>
 
-      <div className="about-card">
-        <strong>TrackRide</strong>
-
-        <p>
-          One place for buses, trains,
-          routes and real-time transport
-          information across India.
-        </p>
-      </div>
+      {user && (
+        <button
+          className="logout-button"
+          onClick={onLogout}
+        >
+          Sign Out
+        </button>
+      )}
 
     </div>
   );
 }
 
 
-/* =========================================================
-   SMALL COMPONENTS
-========================================================= */
+/* =====================================================
+   COMPONENTS
+===================================================== */
+
+function BottomNav({
+  tab,
+  onChange,
+}) {
+  return (
+    <nav className="bottom-navigation">
+
+      {NAV.map((item) => (
+        <button
+          key={item.id}
+          className={
+            tab === item.id
+              ? "active"
+              : ""
+          }
+          onClick={() =>
+            onChange(item.id)
+          }
+        >
+
+          <span className="nav-icon">
+            {item.icon}
+          </span>
+
+          <span>
+            {item.label}
+          </span>
+
+        </button>
+      ))}
+
+    </nav>
+  );
+}
+
+
+function FeatureRow({
+  icon,
+  title,
+  right = "›",
+}) {
+  return (
+    <div className="feature-row">
+
+      <span className="feature-icon">
+        {icon}
+      </span>
+
+      <strong>{title}</strong>
+
+      <span className="feature-right">
+        {right}
+      </span>
+
+    </div>
+  );
+}
+
 
 function SettingRow({
   icon,
   title,
-  subtitle,
   value,
   onChange,
 }) {
   return (
-    <div className="setting-row">
+    <div className="feature-row">
 
-      <span className="setting-icon">
+      <span className="feature-icon">
         {icon}
       </span>
 
-      <div className="setting-info">
-
-        <strong>{title}</strong>
-
-        <small>{subtitle}</small>
-
-      </div>
+      <strong>{title}</strong>
 
       <button
         className={
-          "switch " +
+          "toggle " +
           (value ? "on" : "")
         }
-        onClick={() => onChange(!value)}
+        onClick={() =>
+          onChange(!value)
+        }
       >
         <span />
       </button>
@@ -1209,51 +1619,52 @@ function SettingRow({
 }
 
 
-function InfoBox({ label, value }) {
+function Info({
+  label,
+  value,
+}) {
   return (
-    <div className="info-box">
+    <div className="info">
+
       <small>{label}</small>
+
       <strong>{value}</strong>
+
     </div>
   );
 }
 
 
-function Loading() {
+function Loading({ text }) {
   return (
-    <div className="loading">
+    <div className="loading-box">
+
       <div className="spinner" />
-      Loading transport data…
+
+      <span>
+        {text || "Loading..."}
+      </span>
+
     </div>
   );
 }
 
 
-function EmptyState({
-  icon,
+function Empty({
   title,
   text,
 }) {
   return (
-    <div className="empty-state">
+    <div className="empty-card">
 
-      <div className="empty-icon">
-        {icon}
+      <div className="empty-large-icon">
+        🔎
       </div>
 
-      <strong>{title}</strong>
+      <h3>{title}</h3>
 
       <p>{text}</p>
 
-    </div>
-  );
-}
-
-
-function ErrorState({ message }) {
-  return (
-    <div className="error-state">
-      ⚠️ {message}
     </div>
   );
 }
