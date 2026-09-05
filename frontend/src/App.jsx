@@ -1,27 +1,31 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useState } from "react";
 import { api } from "./api";
 import { useAsync, useLiveTracking, useSearch } from "./hooks";
 
 const TABS = [
   ["home", "⌂", "Home"],
-  ["search", "⌕", "Find"],
+  ["search", "⌕", "Search"],
   ["live", "◉", "Live"],
   ["alerts", "!", "Alerts"],
   ["profile", "●", "Profile"],
 ];
 
-const demoGoogleDisabled = !import.meta.env.VITE_GOOGLE_CLIENT_ID;
+const googleDisabled = !import.meta.env.VITE_GOOGLE_CLIENT_ID;
 
 function App() {
   const [tab, setTab] = useState("home");
+
   const [mode, setMode] = useState("both");
   const [from, setFrom] = useState("");
   const [to, setTo] = useState("");
   const [date, setDate] = useState("");
-  const [detailVehicle, setDetailVehicle] = useState(null);
+
+  const [selectedVehicle, setSelectedVehicle] = useState(null);
+
   const [user, setUser] = useState(() =>
     JSON.parse(localStorage.getItem("trackride_user") || "null")
   );
+
   const [settings, setSettings] = useState(() =>
     JSON.parse(
       localStorage.getItem("trackride_settings") ||
@@ -33,19 +37,42 @@ function App() {
     )
   );
 
-  const vehicles = useAsync(() => api.vehicles(mode), [mode]);
-  const alerts = useAsync(api.alerts, []);
-  const search = useSearch({ from, to, type: mode, date });
-  const live = useLiveTracking(
-    detailVehicle?.id,
-    Boolean(detailVehicle)
+  /* ---------------- BACKEND HOOKS ---------------- */
+
+  const vehiclesState = useAsync(
+    () => api.vehicles(mode),
+    [mode]
   );
+
+  const alertsState = useAsync(api.alerts, []);
+
+  const searchState = useSearch({
+    from,
+    to,
+    type: mode,
+    date,
+  });
+
+  const liveState = useLiveTracking(
+    selectedVehicle?.id,
+    Boolean(selectedVehicle)
+  );
+
+  const vehicles = vehiclesState.data?.vehicles || [];
+  const results = searchState.data?.results || [];
+  const alerts = alertsState.data?.alerts || alertsState.data || [];
+
+  const liveVehicle =
+    liveState.data?.vehicle || selectedVehicle;
+
+  /* ---------------- SETTINGS ---------------- */
 
   useEffect(() => {
     document.documentElement.classList.toggle(
       "large-text",
       settings.largeText
     );
+
     localStorage.setItem(
       "trackride_settings",
       JSON.stringify(settings)
@@ -54,25 +81,30 @@ function App() {
 
   useEffect(() => {
     if (user) {
-      localStorage.setItem("trackride_user", JSON.stringify(user));
+      localStorage.setItem(
+        "trackride_user",
+        JSON.stringify(user)
+      );
     } else {
       localStorage.removeItem("trackride_user");
     }
   }, [user]);
 
-  const nearby = vehicles.data?.vehicles || [];
-  const results = search.data?.results || [];
-  const liveVehicle = live.data?.vehicle || detailVehicle;
+  /* ---------------- ACTIONS ---------------- */
 
-  const setSetting = (key, value) =>
-    setSettings((s) => ({ ...s, [key]: value }));
+  const updateSetting = (key, value) => {
+    setSettings((prev) => ({
+      ...prev,
+      [key]: value,
+    }));
+  };
 
-  const performSearch = () => {
-    if (!from.trim() || !to.trim()) {
-      setTab("search");
-      return;
-    }
+  const openVehicle = (vehicle) => {
+    setSelectedVehicle(vehicle);
+    setTab("live");
+  };
 
+  const startSearch = () => {
     setTab("search");
   };
 
@@ -80,45 +112,63 @@ function App() {
     try {
       const data = await api.googleLogin(credential);
       setUser(data.user);
-    } catch (e) {
-      alert(e.message);
+    } catch (error) {
+      alert(error.message);
     }
   };
 
-  const logout = () => setUser(null);
+  const logout = () => {
+    setUser(null);
+  };
 
-  const openVehicle = (vehicle) => {
-    setDetailVehicle(vehicle);
-    setTab("live");
+  const goTab = (nextTab) => {
+    setTab(nextTab);
   };
 
   return (
-    <div className="page">
-      <main className="shell">
+    <div className="page-wrap">
+      <div className="app-shell">
+
+        {/* HEADER */}
         <header className="topbar">
-          <div>
-            <div className="brand">TrackRide</div>
-            <div className="tagline">
-              Bus + Train • India • Live
+          <div className="topbar-row">
+
+            <div className="brand">
+              <div className="brand-mark">
+                TrackRide
+              </div>
+
+              <div className="brand-tag">
+                Your city. Your route. In real time.
+              </div>
             </div>
+
+            <button
+              className="icon-btn"
+              onClick={() => setTab("profile")}
+              aria-label="Profile"
+            >
+              {user?.picture ? (
+                <img src={user.picture} alt="" />
+              ) : (
+                "👤"
+              )}
+            </button>
+
           </div>
 
-          <button
-            className="iconButton"
-            onClick={() => setTab("profile")}
-            aria-label="Open profile"
-          >
-            {user?.picture ? (
-              <img src={user.picture} alt="" />
-            ) : (
-              "●"
-            )}
-          </button>
+          {tab !== "home" && (
+            <h1 className="screen-title">
+              {TABS.find((item) => item[0] === tab)?.[2]}
+            </h1>
+          )}
         </header>
 
-        <section className="content">
+        {/* CONTENT */}
+        <main className="content">
+
           {tab === "home" && (
-            <Home
+            <HomeScreen
               from={from}
               to={to}
               date={date}
@@ -127,10 +177,10 @@ function App() {
               setTo={setTo}
               setDate={setDate}
               setMode={setMode}
-              onSearch={performSearch}
-              vehicles={nearby}
-              onOpen={openVehicle}
-              onFind={() => setTab("search")}
+              onSearch={startSearch}
+              vehicles={vehicles}
+              onOpenVehicle={openVehicle}
+              loading={vehiclesState.loading}
             />
           )}
 
@@ -144,485 +194,817 @@ function App() {
               setTo={setTo}
               setDate={setDate}
               setMode={setMode}
-              onSearch={performSearch}
-              state={search}
-              onOpen={openVehicle}
+              onSearch={startSearch}
+              state={searchState}
+              results={results}
+              onOpenVehicle={openVehicle}
             />
           )}
 
           {tab === "live" && (
             <LiveScreen
               vehicle={liveVehicle}
-              state={live}
-              vehicles={nearby}
-              onOpen={openVehicle}
-              onBack={() => setDetailVehicle(null)}
+              vehicles={vehicles}
+              state={liveState}
+              onOpenVehicle={openVehicle}
             />
           )}
 
           {tab === "alerts" && (
-            <Alerts
-              alerts={alerts.data?.alerts || []}
-              loading={alerts.loading}
-              onOpen={openVehicle}
+            <AlertsScreen
+              alerts={alerts}
+              loading={alertsState.loading}
+              onOpenVehicle={openVehicle}
             />
           )}
 
           {tab === "profile" && (
-            <Profile
+            <ProfileScreen
               user={user}
-              setUser={setUser}
+              googleDisabled={googleDisabled}
+              onGoogleLogin={loginWithGoogle}
               logout={logout}
               settings={settings}
-              setSetting={setSetting}
-              googleDisabled={demoGoogleDisabled}
-              onGoogleLogin={loginWithGoogle}
+              updateSetting={updateSetting}
             />
           )}
-        </section>
 
-        <nav className="bottomNav" aria-label="Main navigation">
+        </main>
+
+        {/* BOTTOM NAVIGATION */}
+        <nav className="bottom-nav">
           {TABS.map(([id, icon, label]) => (
             <button
               key={id}
-              className={tab === id ? "nav active" : "nav"}
-              onClick={() => setTab(id)}
+              className={
+                "nav-btn " +
+                (tab === id ? "active" : "")
+              }
+              onClick={() => goTab(id)}
             >
-              <span>{icon}</span>
-              <small>{label}</small>
+              <span className="ni">{icon}</span>
+              <span className="nl">{label}</span>
             </button>
           ))}
         </nav>
-      </main>
+
+      </div>
     </div>
   );
 }
 
-function ModeSwitch({ mode, setMode }) {
-  return (
-    <div
-      className="segmented"
-      role="tablist"
-      aria-label="Transport type"
-    >
-      {[
-        ["both", "All"],
-        ["bus", "Bus"],
-        ["train", "Train"],
-      ].map(([id, label]) => (
-        <button
-          key={id}
-          className={mode === id ? "selected" : ""}
-          onClick={() => setMode(id)}
-        >
-          {label}
-        </button>
-      ))}
-    </div>
-  );
-}
 
-function SearchBox({
+/* =========================================================
+   HOME
+========================================================= */
+
+function HomeScreen({
   from,
   to,
+  date,
+  mode,
   setFrom,
   setTo,
-  date,
   setDate,
+  setMode,
+  onSearch,
+  vehicles,
+  onOpenVehicle,
+  loading,
+}) {
+  return (
+    <div className="fadein">
+
+      <div className="hero">
+        <div className="eyebrow">
+          ONE SEARCH. EVERY RIDE.
+        </div>
+
+        <h2>
+          Where do you
+          <br />
+          want to go?
+        </h2>
+
+        <p>
+          Find buses and trains across India
+          from one place.
+        </p>
+      </div>
+
+      <SearchCard
+        from={from}
+        to={to}
+        date={date}
+        mode={mode}
+        setFrom={setFrom}
+        setTo={setTo}
+        setDate={setDate}
+        setMode={setMode}
+        onSearch={onSearch}
+      />
+
+      <div className="quick-actions">
+
+        <button
+          className="quick-btn"
+          onClick={() => {
+            setMode("bus");
+            onOpenVehicle(vehicles[0]);
+          }}
+        >
+          <span className="qi">🚌</span>
+          <span className="ql">Nearby Buses</span>
+        </button>
+
+        <button
+          className="quick-btn"
+          onClick={() => {
+            setMode("train");
+            onOpenVehicle(vehicles[0]);
+          }}
+        >
+          <span className="qi">🚆</span>
+          <span className="ql">Nearby Trains</span>
+        </button>
+
+        <button
+          className="quick-btn"
+          onClick={() => {
+            document
+              .querySelector(".search-input")
+              ?.focus();
+          }}
+        >
+          <span className="qi">📍</span>
+          <span className="ql">Search Places</span>
+        </button>
+
+      </div>
+
+      <div className="section-heading">
+        Nearby live transport
+      </div>
+
+      {loading ? (
+        <Loading />
+      ) : vehicles.length === 0 ? (
+        <EmptyState
+          icon="🚌"
+          title="No live vehicles yet"
+          text="Live buses and trains will appear here when the backend has transport data."
+        />
+      ) : (
+        <div className="card-list">
+          {vehicles.slice(0, 5).map((vehicle) => (
+            <VehicleCard
+              key={vehicle.id}
+              vehicle={vehicle}
+              onOpen={onOpenVehicle}
+            />
+          ))}
+        </div>
+      )}
+
+    </div>
+  );
+}
+
+
+/* =========================================================
+   SEARCH
+========================================================= */
+
+function SearchCard({
+  from,
+  to,
+  date,
   mode,
+  setFrom,
+  setTo,
+  setDate,
   setMode,
   onSearch,
 }) {
   return (
-    <div className="searchCard">
-      <ModeSwitch mode={mode} setMode={setMode} />
+    <div className="search-card">
 
-      <label className="field">
-        <span>FROM</span>
-        <input
-          value={from}
-          onChange={(e) => setFrom(e.target.value)}
-          placeholder="City, station or stop"
-        />
+      <div className="transport-switch">
+
+        <button
+          className={mode === "both" ? "selected" : ""}
+          onClick={() => setMode("both")}
+        >
+          All
+        </button>
+
+        <button
+          className={mode === "bus" ? "selected" : ""}
+          onClick={() => setMode("bus")}
+        >
+          🚌 Bus
+        </button>
+
+        <button
+          className={mode === "train" ? "selected" : ""}
+          onClick={() => setMode("train")}
+        >
+          🚆 Train
+        </button>
+
+      </div>
+
+      <label className="search-field">
+        <span className="search-dot from">●</span>
+
+        <div>
+          <small>FROM</small>
+
+          <input
+            className="search-input"
+            value={from}
+            onChange={(e) => setFrom(e.target.value)}
+            placeholder="City, station or stop"
+          />
+        </div>
       </label>
 
-      <div className="swap">↕</div>
+      <div className="search-divider" />
 
-      <label className="field">
-        <span>TO</span>
-        <input
-          value={to}
-          onChange={(e) => setTo(e.target.value)}
-          placeholder="Where do you want to go?"
-        />
+      <label className="search-field">
+        <span className="search-dot to">●</span>
+
+        <div>
+          <small>TO</small>
+
+          <input
+            value={to}
+            onChange={(e) => setTo(e.target.value)}
+            placeholder="Where do you want to go?"
+          />
+        </div>
       </label>
 
-      <label className="field">
-        <span>DATE</span>
-        <input
-          type="date"
-          value={date}
-          onChange={(e) => setDate(e.target.value)}
-        />
+      <div className="search-divider" />
+
+      <label className="date-field">
+        <span>📅</span>
+
+        <div>
+          <small>DATE</small>
+
+          <input
+            type="date"
+            value={date}
+            onChange={(e) => setDate(e.target.value)}
+          />
+        </div>
       </label>
 
-      <button className="primary" onClick={onSearch}>
+      <button
+        className="primary-btn"
+        onClick={onSearch}
+      >
         Find buses & trains
       </button>
+
     </div>
   );
 }
 
-function Home(props) {
-  return (
-    <>
-      <div className="hero">
-        <p className="eyebrow">ONE SEARCH. EVERY RIDE.</p>
 
-        <h1>
-          Where do you
-          <br />
-          want to go?
-        </h1>
+/* =========================================================
+   SEARCH RESULTS
+========================================================= */
+
+function SearchScreen({
+  from,
+  to,
+  date,
+  mode,
+  setFrom,
+  setTo,
+  setDate,
+  setMode,
+  onSearch,
+  state,
+  results,
+  onOpenVehicle,
+}) {
+  return (
+    <div className="fadein">
+
+      <div className="page-intro">
+        <div className="eyebrow">
+          PLAN YOUR JOURNEY
+        </div>
+
+        <h2>Find a ride</h2>
 
         <p>
-          Find buses and trains across India from one place.
+          Search buses and trains by city,
+          station or stop.
         </p>
       </div>
 
-      <div
-        style={{
-          height: "300px",
-          width: "100%",
-          marginBottom: "20px",
-          borderRadius: "22px",
-          overflow: "hidden",
-          border: "1px solid #E1E3EC"
-        }}
-      >
-        <MapContainer
-          center={[22.5937, 78.9629]}
-          zoom={5}
-          style={{ height: "100%", width: "100%" }}
-        >
-          <TileLayer
-            attribution="&copy; OpenStreetMap contributors"
-            url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
-          />
-        </MapContainer>
-      </div>
-
-      <SearchBox {...props} />
-
-      <div className="sectionTitle">
-        Nearby live vehicles
-      </div>
-
-      <VehicleList
-        vehicles={props.vehicles}
-        onOpen={props.onOpen}
+      <SearchCard
+        from={from}
+        to={to}
+        date={date}
+        mode={mode}
+        setFrom={setFrom}
+        setTo={setTo}
+        setDate={setDate}
+        setMode={setMode}
+        onSearch={onSearch}
       />
-    </>
-  );
-}
-
-function SearchScreen({ state, onOpen, ...props }) {
-  const results = state.data?.results || [];
-
-  return (
-    <>
-      <div className="screenHeading">
-        <h2>Find a ride</h2>
-        <p>Search by city, station or stop.</p>
-      </div>
-
-      <SearchBox {...props} />
 
       {state.loading && <Loading />}
 
       {state.error && (
-        <ErrorBox message={state.error.message} />
+        <ErrorState message={state.error.message} />
       )}
 
       {!state.loading &&
         !state.error &&
         results.length > 0 && (
-          <div className="results">
-            <div className="sectionTitle">
-              {results.length} options
+          <>
+            <div className="section-heading">
+              {results.length} transport options
             </div>
 
-            {results.map((r) => (
-              <ResultCard
-                key={r.id}
-                result={r}
-                onOpen={onOpen}
-              />
-            ))}
-          </div>
+            <div className="card-list">
+              {results.map((result) => (
+                <ResultCard
+                  key={result.id}
+                  result={result}
+                  onOpen={onOpenVehicle}
+                />
+              ))}
+            </div>
+          </>
         )}
 
       {!state.loading &&
-        props.from &&
-        props.to &&
-        !results.length &&
-        !state.error && (
-          <Empty text="No demo results yet. Connect a real transit provider in the backend." />
+        !state.error &&
+        from &&
+        to &&
+        results.length === 0 && (
+          <EmptyState
+            icon="🔎"
+            title="No rides found"
+            text="Try another city, station or transport type."
+          />
         )}
-    </>
+
+    </div>
   );
 }
+
+
+/* =========================================================
+   VEHICLE CARD
+========================================================= */
+
+function VehicleCard({ vehicle, onOpen }) {
+  const isTrain = vehicle.type === "train";
+
+  return (
+    <article
+      className="vehicle-card"
+      onClick={() => onOpen(vehicle)}
+    >
+
+      <div
+        className={
+          "vehicle-badge " +
+          (isTrain ? "train" : "bus")
+        }
+      >
+        {isTrain ? "🚆" : "🚌"}
+      </div>
+
+      <div className="vehicle-info">
+
+        <div className="vehicle-name">
+          {vehicle.name || vehicle.number || "Transport"}
+        </div>
+
+        <div className="vehicle-route">
+          {vehicle.from || "Unknown"} →{" "}
+          {vehicle.to || "Unknown"}
+        </div>
+
+        <div className="vehicle-meta">
+          {isTrain ? "TRAIN" : "BUS"}
+          {vehicle.status && (
+            <> · {vehicle.status}</>
+          )}
+        </div>
+
+      </div>
+
+      <div className="vehicle-arrow">
+        ›
+      </div>
+
+    </article>
+  );
+}
+
+
+/* =========================================================
+   RESULT CARD
+========================================================= */
 
 function ResultCard({ result, onOpen }) {
   const isTrain = result.type === "train";
 
   return (
-    <article className="resultCard">
-      <div className="resultTop">
-        <span
+    <article className="result-card">
+
+      <div className="result-top">
+
+        <div
           className={
-            "transportBadge " +
+            "transport-badge " +
             (isTrain ? "train" : "bus")
           }
         >
-          {isTrain ? "TRAIN" : "BUS"}
+          {isTrain ? "🚆 TRAIN" : "🚌 BUS"}
+        </div>
+
+        <span className="result-duration">
+          {result.duration
+            ? `${result.duration} min`
+            : ""}
         </span>
 
-        <strong>{result.name}</strong>
-
-        <span className="time">
-          {result.duration} min
-        </span>
       </div>
 
-      <div className="routeText">
+      <h3>
+        {result.name ||
+          result.number ||
+          "Transport service"}
+      </h3>
+
+      <div className="result-route">
         {result.from} → {result.to}
       </div>
 
-      <div className="meta">
-        <span>{result.departure}</span>
-        <span>{result.arrival}</span>
-        <span>{result.status}</span>
+      <div className="result-times">
+
+        <div>
+          <small>DEPARTURE</small>
+          <strong>
+            {result.departure || "--"}
+          </strong>
+        </div>
+
+        <div className="time-line">
+          ─────────
+        </div>
+
+        <div className="right">
+          <small>ARRIVAL</small>
+          <strong>
+            {result.arrival || "--"}
+          </strong>
+        </div>
+
       </div>
 
-      <button
-        className="secondary"
-        onClick={() => onOpen(result.vehicle)}
-      >
-        Track live
-      </button>
-    </article>
-  );
-}
+      <div className="result-bottom">
+        <span>
+          {result.status || "Schedule available"}
+        </span>
 
-function VehicleList({ vehicles, onOpen }) {
-  /*
-    Changed:
-    The old "No nearby demo vehicles." message has been removed.
-    When there are no vehicles, nothing is displayed.
-  */
-
-  if (!vehicles?.length) return null;
-
-  return (
-    <div className="results">
-      {vehicles.map((v) => (
-        <article
-          className="vehicleCard"
-          key={v.id}
-          onClick={() => onOpen(v)}
-        >
-          <div className="vehicleIcon">
-            {v.type === "train" ? "🚆" : "🚌"}
-          </div>
-
-          <div className="grow">
-            <strong>{v.name}</strong>
-
-            <div className="muted">
-              {v.from} → {v.to}
-            </div>
-          </div>
-
-          <div className="eta">
-            <b>{v.etaMin}</b>
-            <small>min</small>
-          </div>
-        </article>
-      ))}
-    </div>
-  );
-}
-
-function LiveScreen({
-  vehicle,
-  state,
-  vehicles,
-  onOpen,
-  onBack,
-}) {
-  if (!vehicle) {
-    return (
-      <>
-        <div className="screenHeading">
-          <h2>Live tracking</h2>
-          <p>
-            Select a bus or train to see movement.
-          </p>
-        </div>
-
-        <VehicleList
-          vehicles={vehicles}
-          onOpen={onOpen}
-        />
-      </>
-    );
-  }
-
-  const current = state.data?.vehicle || vehicle;
-
-  return (
-    <>
-      <div className="screenHeading rowBetween">
-        <div>
-          <h2>Live tracking</h2>
-          <p>{current.name}</p>
-        </div>
-
-        {onBack && (
-          <button className="ghost" onClick={onBack}>
-            Close
+        {result.vehicle && (
+          <button
+            className="small-btn"
+            onClick={() =>
+              onOpen(result.vehicle)
+            }
+          >
+            Live tracking
           </button>
         )}
       </div>
 
-      {state.error && (
-        <ErrorBox message={state.error.message} />
-      )}
-
-      <div className="mapMock">
-        <div className="mapGrid" />
-
-        <div className="routeLine" />
-
-        <div
-          className="vehicleDot"
-          style={{
-            left: `${Math.max(
-              5,
-              Math.min(92, current.progress * 100)
-            )}%`,
-          }}
-        >
-          {current.type === "train" ? "🚆" : "🚌"}
-        </div>
-
-        <span className="mapLabel start">
-          {current.from}
-        </span>
-
-        <span className="mapLabel end">
-          {current.to}
-        </span>
-      </div>
-
-      <div className="livePanel">
-        <div className="liveBig">
-          {current.etaMin}
-          <span> min</span>
-        </div>
-
-        <div className="muted">
-          estimated time to destination
-        </div>
-
-        <div className="infoGrid">
-          <Info
-            label="Status"
-            value={current.status}
-          />
-
-          <Info
-            label="Next stop"
-            value={current.nextStop || "Updating"}
-          />
-
-          <Info
-            label="Distance"
-            value={`${current.distanceKm ?? "--"} km`}
-          />
-
-          <Info
-            label="Updated"
-            value={
-              current.updatedAt
-                ? new Date(
-                    current.updatedAt
-                  ).toLocaleTimeString()
-                : "Now"
-            }
-          />
-        </div>
-      </div>
-    </>
+    </article>
   );
 }
 
-function Alerts({ alerts, loading, onOpen }) {
+
+/* =========================================================
+   LIVE
+========================================================= */
+
+function LiveScreen({
+  vehicle,
+  vehicles,
+  state,
+  onOpenVehicle,
+}) {
+  if (!vehicle) {
+    return (
+      <div className="fadein">
+
+        <div className="page-intro">
+          <div className="eyebrow">
+            REAL-TIME TRANSPORT
+          </div>
+
+          <h2>Live tracking</h2>
+
+          <p>
+            Select a bus or train to see its
+            latest movement.
+          </p>
+        </div>
+
+        {vehicles.length === 0 ? (
+          <EmptyState
+            icon="📍"
+            title="No live vehicles"
+            text="Live transport positions will appear here."
+          />
+        ) : (
+          <div className="card-list">
+            {vehicles.map((v) => (
+              <VehicleCard
+                key={v.id}
+                vehicle={v}
+                onOpen={onOpenVehicle}
+              />
+            ))}
+          </div>
+        )}
+
+      </div>
+    );
+  }
+
+  const current =
+    state.data?.vehicle || vehicle;
+
+  const isTrain = current.type === "train";
+
   return (
-    <>
-      <div className="screenHeading">
-        <h2>Alerts</h2>
+    <div className="fadein">
+
+      <div className="live-header">
+
+        <div>
+          <div className="eyebrow">
+            LIVE NOW
+          </div>
+
+          <h2>
+            {isTrain ? "Train" : "Bus"} tracking
+          </h2>
+
+          <p>
+            {current.name ||
+              current.number ||
+              "Selected vehicle"}
+          </p>
+        </div>
+
+        <span className="live-dot">
+          ● LIVE
+        </span>
+
+      </div>
+
+      {/* MAP AREA */}
+      <div className="map-card">
+
+        <div className="map-header">
+          <strong>
+            Live location
+          </strong>
+
+          <span>
+            {current.updatedAt
+              ? new Date(
+                  current.updatedAt
+                ).toLocaleTimeString()
+              : "Updating"}
+          </span>
+        </div>
+
+        <div className="map-area">
+
+          <div className="map-grid" />
+
+          <div className="map-route-line">
+            <span className="map-stop first" />
+            <span className="map-stop second" />
+            <span className="map-stop third" />
+            <span className="map-stop fourth" />
+          </div>
+
+          <div className="vehicle-marker">
+            {isTrain ? "🚆" : "🚌"}
+          </div>
+
+          <div className="location-label">
+            Current location
+          </div>
+
+        </div>
+
+      </div>
+
+      {state.error && (
+        <ErrorState message={state.error.message} />
+      )}
+
+      {/* LIVE INFORMATION */}
+      <div className="live-card">
+
+        <div className="live-vehicle-row">
+
+          <div
+            className={
+              "vehicle-badge " +
+              (isTrain ? "train" : "bus")
+            }
+          >
+            {isTrain ? "🚆" : "🚌"}
+          </div>
+
+          <div className="vehicle-info">
+
+            <strong>
+              {current.name ||
+                current.number ||
+                "Transport"}
+            </strong>
+
+            <span>
+              {current.from || "--"} →{" "}
+              {current.to || "--"}
+            </span>
+
+          </div>
+
+        </div>
+
+        <div className="live-stats">
+
+          <InfoBox
+            label="ETA"
+            value={
+              current.etaMin != null
+                ? `${current.etaMin} min`
+                : "--"
+            }
+          />
+
+          <InfoBox
+            label="Distance"
+            value={
+              current.distanceKm != null
+                ? `${current.distanceKm} km`
+                : "--"
+            }
+          />
+
+          <InfoBox
+            label="Speed"
+            value={
+              current.speed != null
+                ? `${current.speed} km/h`
+                : "--"
+            }
+          />
+
+          <InfoBox
+            label="Status"
+            value={
+              current.status || "Active"
+            }
+          />
+
+        </div>
+
+      </div>
+
+    </div>
+  );
+}
+
+
+/* =========================================================
+   ALERTS
+========================================================= */
+
+function AlertsScreen({
+  alerts,
+  loading,
+  onOpenVehicle,
+}) {
+  return (
+    <div className="fadein">
+
+      <div className="page-intro">
+        <div className="eyebrow">
+          STAY UPDATED
+        </div>
+
+        <h2>Service alerts</h2>
+
         <p>
-          Service changes and live transport updates.
+          Delays, service changes and live
+          transport updates.
         </p>
       </div>
 
       {loading ? (
         <Loading />
+      ) : alerts.length === 0 ? (
+        <EmptyState
+          icon="🔔"
+          title="No alerts"
+          text="You're all clear for now."
+        />
       ) : (
-        alerts.map((a) => (
+        alerts.map((alert) => (
           <article
-            className={"alert " + a.priority}
-            key={a.id}
+            className={
+              "alert-card " +
+              (alert.priority || "normal")
+            }
+            key={alert.id}
             onClick={() =>
-              a.vehicle && onOpen(a.vehicle)
+              alert.vehicle &&
+              onOpenVehicle(alert.vehicle)
             }
           >
-            <span>
-              {a.priority === "urgent"
+
+            <div className="alert-icon">
+              {alert.priority === "urgent"
                 ? "⚠️"
                 : "🔔"}
-            </span>
-
-            <div>
-              <strong>{a.title}</strong>
-
-              <p>{a.text}</p>
-
-              <small>{a.time}</small>
             </div>
+
+            <div className="alert-content">
+
+              <div className="alert-title">
+                {alert.title ||
+                  alert.message ||
+                  "Transport update"}
+              </div>
+
+              <p>
+                {alert.text ||
+                  alert.message ||
+                  "New service information available."}
+              </p>
+
+              <small>
+                {alert.time ||
+                  alert.created_at ||
+                  "Recently"}
+              </small>
+
+            </div>
+
           </article>
         ))
       )}
-    </>
+
+    </div>
   );
 }
 
-function Profile({
+
+/* =========================================================
+   PROFILE
+========================================================= */
+
+function ProfileScreen({
   user,
-  logout,
-  settings,
-  setSetting,
   googleDisabled,
   onGoogleLogin,
+  logout,
+  settings,
+  updateSetting,
 }) {
   useEffect(() => {
-    if (googleDisabled || !window.google) return;
+    if (
+      googleDisabled ||
+      !window.google
+    ) {
+      return;
+    }
 
     window.google.accounts.id.initialize({
       client_id:
         import.meta.env.VITE_GOOGLE_CLIENT_ID,
+
       callback: (response) =>
         onGoogleLogin(response.credential),
     });
@@ -642,95 +1024,120 @@ function Profile({
         }
       );
     }
-  }, [
-    googleDisabled,
-    onGoogleLogin,
-  ]);
+  }, [googleDisabled, onGoogleLogin]);
 
   return (
-    <>
-      <div className="profile">
+    <div className="fadein">
+
+      <div className="profile-header">
+
         <div className="avatar">
           {user?.picture ? (
-            <img src={user.picture} alt="" />
+            <img
+              src={user.picture}
+              alt=""
+            />
           ) : (
             "GU"
           )}
         </div>
 
         <div>
-          <h2>{user?.name || "Guest User"}</h2>
+          <div className="profile-name">
+            {user?.name || "Guest User"}
+          </div>
 
-          <p>
+          <div className="profile-sub">
             {user?.email ||
-              "Sign in to save routes and preferences."}
-          </p>
+              "Sign in to sync your TrackRide account"}
+          </div>
         </div>
+
       </div>
 
       {!user ? (
-        <div className="authCard">
-          <h3>Sign in to TrackRide</h3>
+        <div className="auth-card">
 
-          <p className="muted">
-            Use Google to create your TrackRide
-            account and sync saved journeys.
+          <div className="section-heading">
+            Your TrackRide account
+          </div>
+
+          <p>
+            Sign in with Google to save routes,
+            preferences and journeys.
           </p>
 
           <div
             id="googleButton"
-            className="googleButton"
+            className="google-button"
           />
 
           {googleDisabled && (
-            <p className="hint">
-              Set VITE_GOOGLE_CLIENT_ID in
-              frontend/.env to enable Google sign-in.
-            </p>
+            <small>
+              Google sign-in will be enabled after
+              VITE_GOOGLE_CLIENT_ID is configured.
+            </small>
           )}
+
         </div>
       ) : (
         <button
-          className="secondary full"
+          className="secondary-btn full"
           onClick={logout}
         >
           Sign out
         </button>
       )}
 
-      <div className="sectionTitle">
-        Settings
+      <div className="section-heading">
+        Preferences
       </div>
 
-      <div className="settings">
-        <Setting
-          label="Notifications"
-          sub="Arrival and delay alerts"
+      <div className="settings-card">
+
+        <SettingRow
+          icon="🔔"
+          title="Notifications"
+          subtitle="Arrival and delay alerts"
           value={settings.notifications}
-          onChange={(v) =>
-            setSetting("notifications", v)
+          onChange={(value) =>
+            updateSetting(
+              "notifications",
+              value
+            )
           }
         />
 
-        <Setting
-          label="Larger text"
-          sub="Accessibility mode"
+        <SettingRow
+          icon="🔠"
+          title="Larger text"
+          subtitle="Accessibility mode"
           value={settings.largeText}
-          onChange={(v) =>
-            setSetting("largeText", v)
+          onChange={(value) =>
+            updateSetting(
+              "largeText",
+              value
+            )
           }
         />
 
-        <div className="settingRow">
-          <div>
+        <div className="setting-row">
+
+          <span className="setting-icon">
+            🌐
+          </span>
+
+          <div className="setting-info">
             <strong>Language</strong>
-            <small>App language</small>
+            <small>
+              Choose your preferred language
+            </small>
           </div>
 
           <select
             value={settings.language}
             onChange={(e) =>
-              setSetting(
+              updateSetting(
                 "language",
                 e.target.value
               )
@@ -741,70 +1148,115 @@ function Profile({
             <option>বাংলা</option>
             <option>मराठी</option>
           </select>
+
         </div>
-      </div>
-    </>
-  );
-}
 
-function Setting({
-  label,
-  sub,
-  value,
-  onChange,
-}) {
-  return (
-    <div className="settingRow">
-      <div>
-        <strong>{label}</strong>
-        <small>{sub}</small>
       </div>
 
-      <button
-        className={
-          "switch " + (value ? "on" : "")
-        }
-        onClick={() => onChange(!value)}
-        aria-pressed={value}
-      >
-        <span />
-      </button>
+      <div className="about-card">
+        <strong>TrackRide</strong>
+
+        <p>
+          One place for buses, trains,
+          routes and real-time transport
+          information across India.
+        </p>
+      </div>
+
     </div>
   );
 }
 
-function Info({ label, value }) {
+
+/* =========================================================
+   SMALL COMPONENTS
+========================================================= */
+
+function SettingRow({
+  icon,
+  title,
+  subtitle,
+  value,
+  onChange,
+}) {
   return (
-    <div className="info">
+    <div className="setting-row">
+
+      <span className="setting-icon">
+        {icon}
+      </span>
+
+      <div className="setting-info">
+
+        <strong>{title}</strong>
+
+        <small>{subtitle}</small>
+
+      </div>
+
+      <button
+        className={
+          "switch " +
+          (value ? "on" : "")
+        }
+        onClick={() => onChange(!value)}
+      >
+        <span />
+      </button>
+
+    </div>
+  );
+}
+
+
+function InfoBox({ label, value }) {
+  return (
+    <div className="info-box">
       <small>{label}</small>
       <strong>{value}</strong>
     </div>
   );
 }
 
+
 function Loading() {
   return (
-    <div className="empty">
-      Loading…
+    <div className="loading">
+      <div className="spinner" />
+      Loading transport data…
     </div>
   );
 }
 
-function Empty({ text }) {
+
+function EmptyState({
+  icon,
+  title,
+  text,
+}) {
   return (
-    <div className="empty">
-      <b>Nothing here yet</b>
-      <span>{text}</span>
+    <div className="empty-state">
+
+      <div className="empty-icon">
+        {icon}
+      </div>
+
+      <strong>{title}</strong>
+
+      <p>{text}</p>
+
     </div>
   );
 }
 
-function ErrorBox({ message }) {
+
+function ErrorState({ message }) {
   return (
-    <div className="error">
-      {message}
+    <div className="error-state">
+      ⚠️ {message}
     </div>
   );
 }
+
 
 export default App;
